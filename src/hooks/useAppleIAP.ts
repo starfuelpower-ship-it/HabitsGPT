@@ -12,6 +12,7 @@ import {
   IAP_PRODUCT_IDS, 
   POINT_BUNDLE_TO_IAP,
   SUBSCRIPTION_TO_IAP,
+  getSubscriptionProductId,
   getCurrentPlatform,
   type IAPProduct, 
   type ProductId,
