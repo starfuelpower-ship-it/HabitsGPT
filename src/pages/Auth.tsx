@@ -42,8 +42,10 @@ const Auth = () => {
       } else {
         await signIn(email.trim(), password);
         navigate('/');
-      // Ensure UI picks up the fresh session immediately
-      setTimeout(() => window.location.reload(), 50);
+        // Do NOT hard-reload here.
+        // Supabase persists the session to storage asynchronously.
+        // Reloading immediately can happen before the session is written,
+        // making the app look like you are not signed in.
       }
     } catch (err: any) {
       const message =
