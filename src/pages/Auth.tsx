@@ -17,9 +17,11 @@ const Auth = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [rememberMe, setRememberMe] = useState(() => {
+    try { return localStorage.getItem('rememberMe') !== 'false'; } catch { return true; }
+  });
 
   // Per your request: keep it simple. Remember-me is always enabled (persistent session).
-  const rememberMe = true;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +42,8 @@ const Auth = () => {
       } else {
         await signIn(email.trim(), password);
         navigate('/');
+      // Ensure UI picks up the fresh session immediately
+      setTimeout(() => window.location.reload(), 50);
       }
     } catch (err: any) {
       const message =
@@ -76,7 +80,7 @@ const Auth = () => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                disabled={isSubmitting}
+                /* disabled removed */={isSubmitting}
               />
             </div>
 
@@ -95,7 +99,15 @@ const Auth = () => {
 
             <div className="flex items-center justify-between">
               <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Checkbox checked={rememberMe} disabled />
+                <Checkbox
+                  id="remember"
+                  checked={rememberMe}
+                  onCheckedChange={(v) => {
+                    const next = v === true;
+                    setRememberMe(next);
+                    try { localStorage.setItem('rememberMe', next ? 'true' : 'false'); } catch {}
+                  }}
+                />
                 <span>Remember me</span>
               </label>
 
