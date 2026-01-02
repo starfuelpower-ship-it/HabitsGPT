@@ -1,0 +1,10 @@
+project_id = "gpplrmlhqhsfdnbjggns"
+
+[functions.verify-premium-purchase]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.gentle-ai]
+verify_jwt = true
