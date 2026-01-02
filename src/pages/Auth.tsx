@@ -80,7 +80,7 @@ const Auth = () => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                /* disabled removed */={isSubmitting}
+                disabled={isSubmitting}
               />
             </div>
 
@@ -97,8 +97,8 @@ const Auth = () => {
               />
             </div>
 
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+	            <div className="flex items-center justify-between">
+	              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
                 <Checkbox
                   id="remember"
                   checked={rememberMe}
@@ -108,7 +108,17 @@ const Auth = () => {
                     try { localStorage.setItem('rememberMe', next ? 'true' : 'false'); } catch {}
                   }}
                 />
-                <span>Remember me</span>
+	                <span
+	                  onClick={(e) => {
+	                    // Radix Checkbox doesn't automatically toggle from label text in all cases.
+	                    e.preventDefault();
+	                    const next = !rememberMe;
+	                    setRememberMe(next);
+	                    try { localStorage.setItem('rememberMe', next ? 'true' : 'false'); } catch {}
+	                  }}
+	                >
+	                  Remember me
+	                </span>
               </label>
 
               <button

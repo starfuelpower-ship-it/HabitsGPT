@@ -317,7 +317,7 @@ const Index = () => {
                 <Moon className="w-5 h-5" />
               )}
             </Button>
-            {isLoggedIn ? (
+	            {isLoggedIn ? (
               <Button
                 variant="ghost"
                 size="icon"
@@ -326,7 +326,7 @@ const Index = () => {
               >
                 <Settings className="w-5 h-5" />
               </Button>
-            ) : (
+	            ) : authLoading ? null : (
               <Button
                 variant="ghost"
                 size="sm"
