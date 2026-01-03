@@ -30,6 +30,38 @@ export function getCurrentPlatform(): Platform {
 
 export type ProductId = string;
 
+/**
+ * Mapping from internal plan IDs to the keys inside IAP_PRODUCT_IDS.
+ * (These constants are imported by hooks and must be exported for Vercel/web builds.)
+ */
+export type SubscriptionPlanId = 'monthly' | 'annual' | 'lifetime';
+export type PointBundleId = 'small' | 'medium' | 'large' | 'mega';
+
+export const SUBSCRIPTION_TO_IAP = {
+  monthly: 'PREMIUM_MONTHLY',
+  annual: 'PREMIUM_ANNUAL',
+  lifetime: 'PREMIUM_LIFETIME',
+} as const;
+
+export const POINT_BUNDLE_TO_IAP = {
+  small: 'POINTS_SMALL',
+  medium: 'POINTS_MEDIUM',
+  large: 'POINTS_LARGE',
+  mega: 'POINTS_XL',
+} as const;
+
+export function getSubscriptionProductId(planId: SubscriptionPlanId, platform: Platform = getCurrentPlatform()): ProductId {
+  const key = SUBSCRIPTION_TO_IAP[planId];
+  return (IAP_PRODUCT_IDS as any)[platform][key] as ProductId;
+}
+
+export function getPointBundleProductId(bundleId: PointBundleId, platform: Platform = getCurrentPlatform()): ProductId {
+  const key = POINT_BUNDLE_TO_IAP[bundleId];
+  return (IAP_PRODUCT_IDS as any)[platform][key] as ProductId;
+}
+
+
+
 // ============================================
 // PRODUCT IDS - Must match the app stores
 // ============================================
