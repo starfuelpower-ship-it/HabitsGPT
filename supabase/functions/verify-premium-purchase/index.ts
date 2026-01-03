@@ -15,13 +15,13 @@ const APPLE_SANDBOX_URL = 'https://sandbox.itunes.apple.com/verifyReceipt';
 
 // Google Play API endpoint
 const GOOGLE_PLAY_API_BASE = 'https://androidpublisher.googleapis.com/androidpublisher/v3';
-const PACKAGE_NAME = 'app.lovable.53d04b63e0ee43f3822af5b2e6319d75';
+const PACKAGE_NAME = 'com.cozyhabits.app';
 
 // Valid product IDs for this app
-const VALID_SUBSCRIPTION_PRODUCTS = [
-  'app.lovable.53d04b63e0ee43f3822af5b2e6319d75.premium.monthly',
-  'app.lovable.53d04b63e0ee43f3822af5b2e6319d75.premium.annual',
-  'app.lovable.53d04b63e0ee43f3822af5b2e6319d75.premium.lifetime',
+const VALID_PRODUCTS = [
+  'cozy_premium_monthly',
+  'cozy_premium_annual',
+  'lifetime',
 ];
 
 interface AppleReceiptResponse {
@@ -314,7 +314,7 @@ async function validateWithApple(
     // Find subscription in response
     const transactions = appleData.latest_receipt_info || appleData.receipt?.in_app || [];
     const matchingTxns = transactions
-      .filter(txn => VALID_SUBSCRIPTION_PRODUCTS.includes(txn.product_id))
+      .filter(txn => VALID_PRODUCTS.includes(txn.product_id))
       .sort((a, b) => parseInt(b.purchase_date_ms) - parseInt(a.purchase_date_ms));
     
     if (matchingTxns.length === 0) {
@@ -471,7 +471,14 @@ serve(async (req) => {
     }
 
     // Validate with the appropriate platform
-    const expectedProductId = `app.lovable.53d04b63e0ee43f3822af5b2e6319d75.premium.${planId}`;
+    const expectedProductId =
+      planId === 'monthly'
+        ? 'cozy_premium_monthly'
+        : planId === 'annual'
+          ? 'cozy_premium_annual'
+          : planId === 'lifetime'
+            ? 'lifetime'
+            : '';
     let validationResult: ValidationResult;
     
     if (purchasePlatform === 'google') {

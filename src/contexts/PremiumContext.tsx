@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from './AuthContext';
+import { iapService } from '@/services/iapService';
 
 type Platform = 'apple' | 'google' | 'web';
 
@@ -8,8 +9,8 @@ interface PremiumContextType {
   isPremium: boolean;
   isLoading: boolean;
   activatePremium: (
-    planId: string, 
-    transactionId: string, 
+    planId: string,
+    transactionId: string,
     receipt?: string,
     purchaseToken?: string,
     platform?: Platform
@@ -30,8 +31,32 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return;
     }
-    
+
     try {
+      // Prefer native entitlement status if running on device
+      if (iapService.isAvailable()) {
+        iapService.setAppUserId(user.id);
+        const { isPremium: nativePremium, expiresAt } = await iapService.checkPremiumStatus();
+        setIsPremium(nativePremium);
+
+        // Best-effort sync to Supabase so web sessions (or other devices) can reflect status.
+        // (Not fully tamper-proof, but helps keep the app consistent.)
+        try {
+          await supabase
+            .from('profiles')
+            .update({
+              is_premium: nativePremium,
+              premium_expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
+            })
+            .eq('id', user.id);
+        } catch {
+          // ignore sync errors
+        }
+
+        return;
+      }
+
+      // Web fallback: read from DB
       const { data, error } = await supabase
         .from('profiles')
         .select('is_premium, premium_expires_at')
@@ -41,8 +66,8 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
       if (error) throw error;
 
       if (data) {
-        const isActive = data.is_premium && 
-          (!data.premium_expires_at || new Date(data.premium_expires_at) > new Date());
+        const isActive =
+          data.is_premium && (!data.premium_expires_at || new Date(data.premium_expires_at) > new Date());
         setIsPremium(isActive);
       }
     } catch (error) {
@@ -57,44 +82,25 @@ export function PremiumProvider({ children }: { children: ReactNode }) {
   }, [fetchPremiumStatus]);
 
   /**
-   * Activates premium status via secure server-side verification.
-   * This function calls the edge function which verifies the purchase
-   * and updates the database with service role permissions.
+   * Legacy activation path (edge-function verification).
+   * If you keep using `verify-premium-purchase`, ensure that function's product IDs match your store setup.
+   * With RevenueCat, premium should unlock from entitlements immediately after purchase.
    */
-  const activatePremium = useCallback(async (
-    planId: string, 
-    transactionId: string, 
-    receipt?: string,
-    purchaseToken?: string,
-    platform?: Platform
-  ): Promise<boolean> => {
-    if (!user) {
-      console.error('Cannot activate premium: no user logged in');
-      return false;
-    }
-
-    try {
-      const { data, error } = await supabase.functions.invoke('verify-premium-purchase', {
-        body: { planId, transactionId, receipt, purchaseToken, platform }
-      });
-
-      if (error) {
-        console.error('Premium activation error:', error);
-        return false;
-      }
-
-      if (data?.success) {
-        setIsPremium(true);
-        return true;
-      }
-
-      console.error('Premium activation failed:', data?.error);
-      return false;
-    } catch (error) {
-      console.error('Error activating premium:', error);
-      return false;
-    }
-  }, [user]);
+  const activatePremium = useCallback(
+    async (
+      _planId: string,
+      _transactionId: string,
+      _receipt?: string,
+      _purchaseToken?: string,
+      _platform?: Platform
+    ): Promise<boolean> => {
+      // RevenueCat entitlement should already be active after purchase.
+      // Just refresh local + DB status.
+      await fetchPremiumStatus();
+      return true;
+    },
+    [fetchPremiumStatus]
+  );
 
   const refreshPremiumStatus = useCallback(async () => {
     await fetchPremiumStatus();

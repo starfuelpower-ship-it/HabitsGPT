@@ -1,327 +1,308 @@
 /**
- * Cross-Platform In-App Purchases Service
- * 
- * This service handles IAP functionality for both iOS (Apple) and Android (Google Play).
- * Uses @revenuecat/purchases-capacitor (RevenueCat) for cross-platform IAP.
- * 
- * IMPORTANT: Before deploying:
- * 1. iOS: Create products in App Store Connect
- * 2. Android: Create products in Google Play Console
- * 3. Configure RevenueCat dashboard with both App Store Connect and Google Play API keys
- * 4. Add GOOGLE_SERVICE_ACCOUNT_JSON secret for server-side Google Play validation
+ * Cross-Platform In-App Purchases Service (RevenueCat + Capacitor)
+ *
+ * Notes:
+ * - Web builds: IAP is not available. UI should hide/disable purchase buttons on web.
+ * - Native builds (Android/iOS): Uses RevenueCat SDK to talk to Google Play / App Store.
+ *
+ * REQUIRED SETUP (before it will work):
+ * 1) Create products in Google Play Console / App Store Connect with IDs below
+ * 2) In RevenueCat dashboard:
+ *    - Add both store integrations
+ *    - Create an Entitlement with id: "premium"
+ *    - Create an Offering (set as Default) that includes monthly, annual, and lifetime packages
+ * 3) Add public SDK keys to env:
+ *    - VITE_REVENUECAT_PUBLIC_GOOGLE_KEY
+ *    - VITE_REVENUECAT_PUBLIC_APPLE_KEY
  */
 
 import { Capacitor } from '@capacitor/core';
 
-// ============================================
-// PRODUCT IDS - Configure in both app stores
-// ============================================
-// These must match the product IDs in App Store Connect and Google Play Console
+export type Platform = 'apple' | 'google' | 'web';
+export type ProductId = string;
 
+// ============================================
+// PRODUCT IDS - Must match the app stores
+// ============================================
 export const IAP_PRODUCT_IDS = {
-  // Subscriptions
-  PREMIUM_MONTHLY: 'com.cozyhabits.app.premium.monthly',
-  PREMIUM_ANNUAL: 'com.cozyhabits.app.premium.annual',
-  PREMIUM_LIFETIME: 'com.cozyhabits.app.premium.lifetime',
-  
-  // Point Bundles (Consumables)
+  // Premium (monthly/annual are subscriptions; lifetime is a one-time non-consumable)
+  PREMIUM_MONTHLY: 'cozy_premium_monthly',
+  PREMIUM_ANNUAL: 'cozy_premium_annual',
+  PREMIUM_LIFETIME: 'lifetime',
+
+  // Point Bundles (Consumables) - optional
   POINTS_SMALL: 'com.cozyhabits.app.points.500',
   POINTS_MEDIUM: 'com.cozyhabits.app.points.1500',
   POINTS_LARGE: 'com.cozyhabits.app.points.5000',
-  POINTS_MEGA: 'com.cozyhabits.app.points.12000',
+  POINTS_XL: 'com.cozyhabits.app.points.12000',
 } as const;
-
-export type ProductId = typeof IAP_PRODUCT_IDS[keyof typeof IAP_PRODUCT_IDS];
-
-// Map frontend bundle IDs to IAP product IDs
-export const POINT_BUNDLE_TO_IAP: Record<string, ProductId> = {
-  'small': IAP_PRODUCT_IDS.POINTS_SMALL,
-  'medium': IAP_PRODUCT_IDS.POINTS_MEDIUM,
-  'large': IAP_PRODUCT_IDS.POINTS_LARGE,
-  'mega': IAP_PRODUCT_IDS.POINTS_MEGA,
-};
-
-export const SUBSCRIPTION_TO_IAP: Record<string, ProductId> = {
-  'monthly': IAP_PRODUCT_IDS.PREMIUM_MONTHLY,
-  'annual': IAP_PRODUCT_IDS.PREMIUM_ANNUAL,
-  'lifetime': IAP_PRODUCT_IDS.PREMIUM_LIFETIME,
-};
-
-// Platform detection
-export type Platform = 'apple' | 'google' | 'web';
-
-export function getCurrentPlatform(): Platform {
-  const platform = Capacitor.getPlatform();
-  if (platform === 'ios') return 'apple';
-  if (platform === 'android') return 'google';
-  return 'web';
-}
-
-// ============================================
-// TYPES
-// ============================================
 
 export interface IAPProduct {
   productId: string;
   title: string;
   description: string;
-  price: string;
-  priceAmount: number;
-  currency: string;
+  price: string; // localized price string
+  priceAmount: number; // numeric amount if available
+  currency: string; // currency code if available
 }
 
 export interface PurchaseResult {
   success: boolean;
   productId?: string;
   transactionId?: string;
-  purchaseToken?: string; // Google Play specific
-  receipt?: string; // Apple specific
   platform: Platform;
+  // best-effort metadata (may vary by platform / SDK version)
+  raw?: unknown;
   error?: string;
 }
 
-// ============================================
-// IAP SERVICE CLASS
-// ============================================
+type PurchasesSDK = typeof import('@revenuecat/purchases-capacitor');
 
-class CrossPlatformIAPService {
-  private initialized = false;
-  private products: Map<string, IAPProduct> = new Map();
+class IAPService {
   private isNative = Capacitor.isNativePlatform();
-  private currentPlatform: Platform = getCurrentPlatform();
+  private currentPlatform: Platform = 'web';
+  private configured = false;
+  private appUserId?: string;
 
-  /**
-   * Initialize the IAP service
-   * Call this early in app startup
-   */
-  async initialize(): Promise<boolean> {
-    if (this.initialized) return true;
-    
-    if (!this.isNative) {
-      console.log('[IAP] Running in web mode - IAP disabled');
-      this.initialized = true;
-      return true;
-    }
-
-    try {
-      // TODO: Initialize RevenueCat with your API key
-      // const { Purchases } = await import('@revenuecat/purchases-capacitor');
-      // await Purchases.configure({ apiKey: 'YOUR_REVENUECAT_API_KEY' });
-      
-      console.log(`[IAP] Service initialized for platform: ${this.currentPlatform}`);
-      this.initialized = true;
-      return true;
-    } catch (error) {
-      console.error('[IAP] Failed to initialize:', error);
-      return false;
-    }
+  constructor() {
+    this.currentPlatform = this.getCurrentPlatform();
   }
 
-  /**
-   * Check if IAP is available (native platform)
-   */
   isAvailable(): boolean {
     return this.isNative;
   }
 
-  /**
-   * Get current platform
-   */
   getPlatform(): Platform {
     return this.currentPlatform;
   }
 
   /**
-   * Fetch products from the app store
+   * Optional: set app user id (recommended: use your Supabase user.id)
+   * Call this after login.
    */
-  async fetchProducts(productIds: ProductId[]): Promise<IAPProduct[]> {
-    if (!this.isNative) {
-      // Return mock products for web
-      return productIds.map(id => this.getMockProduct(id));
+  setAppUserId(appUserId?: string) {
+    this.appUserId = appUserId || undefined;
+    // Re-configure next time so RevenueCat links purchases to the correct user
+    this.configured = false;
+  }
+
+  private getCurrentPlatform(): Platform {
+    const platform = Capacitor.getPlatform();
+    if (platform === 'ios') return 'apple';
+    if (platform === 'android') return 'google';
+    return 'web';
+  }
+
+  private getApiKey(): string | undefined {
+    // Vite env vars are injected at build time
+    const googleKey = (import.meta as any).env?.VITE_REVENUECAT_PUBLIC_GOOGLE_KEY as string | undefined;
+    const appleKey = (import.meta as any).env?.VITE_REVENUECAT_PUBLIC_APPLE_KEY as string | undefined;
+
+    if (this.currentPlatform === 'google') return googleKey;
+    if (this.currentPlatform === 'apple') return appleKey;
+    return undefined;
+  }
+
+  private async sdk(): Promise<PurchasesSDK> {
+    return await import('@revenuecat/purchases-capacitor');
+  }
+
+  private async ensureConfigured(): Promise<void> {
+    if (!this.isNative) return;
+    if (this.configured) return;
+
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      throw new Error(
+        `[IAP] Missing RevenueCat API key. Set VITE_REVENUECAT_PUBLIC_${this.currentPlatform === 'google' ? 'GOOGLE' : 'APPLE'}_KEY in .env`
+      );
     }
 
+    const { Purchases, LOG_LEVEL } = await this.sdk();
+
+    // Helpful logs during store testing. Reduce in prod if desired.
     try {
-      // TODO: Implement real product fetching
-      // const { Purchases } = await import('@revenuecat/purchases-capacitor');
-      // const offerings = await Purchases.getOfferings();
-      // Map offerings to IAPProduct format
-      
-      return productIds.map(id => this.getMockProduct(id));
-    } catch (error) {
-      console.error('[IAP] Failed to fetch products:', error);
-      return [];
+      await Purchases.setLogLevel({ level: LOG_LEVEL.DEBUG });
+    } catch {
+      // Some versions may not expose setLogLevel - safe to ignore
     }
+
+    await Purchases.configure({
+      apiKey,
+      appUserID: this.appUserId, // optional
+    });
+
+    this.configured = true;
   }
 
   /**
-   * Purchase a product
+   * Fetch products via RevenueCat Offerings (recommended).
+   * If Offerings are not configured, this will return [].
+   */
+  async getProducts(productIds: ProductId[]): Promise<IAPProduct[]> {
+    if (!this.isNative) return [];
+    await this.ensureConfigured();
+
+    const { Purchases } = await this.sdk();
+    const offerings = await Purchases.getOfferings();
+
+    const pkgs: any[] = offerings?.current?.availablePackages || [];
+    if (!pkgs.length) return [];
+
+    const byProductId = new Map<string, any>();
+    for (const p of pkgs) {
+      const pid = p?.product?.identifier || p?.product?.productIdentifier || p?.identifier;
+      if (pid) byProductId.set(pid, p);
+    }
+
+    const results: IAPProduct[] = [];
+    for (const requestedId of productIds) {
+      const pkg = byProductId.get(requestedId);
+      if (!pkg) continue;
+
+      const product = pkg.product || {};
+      const price =
+        product?.priceString ||
+        product?.localizedPriceString ||
+        product?.price ||
+        product?.formattedPrice ||
+        '';
+
+      const currency =
+        product?.currencyCode ||
+        product?.currency ||
+        '';
+
+      const priceAmount =
+        typeof product?.price === 'number'
+          ? product.price
+          : typeof product?.priceAmount === 'number'
+            ? product.priceAmount
+            : Number(product?.priceAmountMicros ? product.priceAmountMicros / 1_000_000 : NaN);
+
+      results.push({
+        productId: requestedId,
+        title: product?.title || product?.name || 'Premium',
+        description: product?.description || '',
+        price: String(price),
+        priceAmount: Number.isFinite(priceAmount) ? priceAmount : 0,
+        currency: String(currency),
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Purchase a product by product id (mapped to a RevenueCat package in the default Offering).
    */
   async purchase(productId: ProductId): Promise<PurchaseResult> {
     if (!this.isNative) {
-      // Simulate purchase for web/demo
-      console.log('[IAP] Web mode - simulating purchase for:', productId);
+      return { success: false, platform: 'web', error: 'Purchases are only available on mobile devices.' };
+    }
+
+    await this.ensureConfigured();
+    const { Purchases } = await this.sdk();
+
+    try {
+      const offerings = await Purchases.getOfferings();
+      const pkgs: any[] = offerings?.current?.availablePackages || [];
+
+      const pkg = pkgs.find(p => {
+        const pid = p?.product?.identifier || p?.product?.productIdentifier || p?.identifier;
+        return pid === productId;
+      });
+
+      if (!pkg) {
+        return {
+          success: false,
+          platform: this.currentPlatform,
+          error: `Product not found in RevenueCat Offering: ${productId}. Check RevenueCat Offering + product IDs.`,
+        };
+      }
+
+      const result: any = await Purchases.purchasePackage({ packageToPurchase: pkg });
+
+      // Result shape varies; keep raw for debugging
+      const transactionId =
+        result?.storeTransaction?.transactionIdentifier ||
+        result?.storeTransaction?.orderId ||
+        result?.transaction?.transactionIdentifier ||
+        result?.transactionIdentifier ||
+        result?.customerInfo?.originalPurchaseDate ||
+        '';
+
       return {
         success: true,
         productId,
-        transactionId: `demo_${Date.now()}`,
-        platform: 'web',
-      };
-    }
-
-    try {
-      // TODO: Implement real purchase flow with RevenueCat
-      // const { Purchases } = await import('@revenuecat/purchases-capacitor');
-      // const result = await Purchases.purchaseProduct({ productIdentifier: productId });
-      
-      // For native platforms, return simulated success with platform-specific data
-      if (this.currentPlatform === 'google') {
-        return {
-          success: true,
-          productId,
-          transactionId: `google_${Date.now()}`,
-          purchaseToken: `token_${Date.now()}_${Math.random().toString(36).substring(7)}`,
-          platform: 'google',
-        };
-      } else {
-        return {
-          success: true,
-          productId,
-          transactionId: `apple_${Date.now()}`,
-          receipt: `receipt_${Date.now()}`, // Would be base64 encoded receipt from StoreKit
-          platform: 'apple',
-        };
-      }
-    } catch (error: unknown) {
-      console.error('[IAP] Purchase failed:', error);
-      
-      // Handle specific error cases
-      const errorCode = (error as { code?: string })?.code;
-      const errorMessage = (error as { message?: string })?.message;
-      
-      if (errorCode === 'USER_CANCELLED') {
-        return { success: false, error: 'Purchase cancelled', platform: this.currentPlatform };
-      }
-      
-      return { 
-        success: false, 
-        error: errorMessage || 'Purchase failed. Please try again.',
+        transactionId: transactionId ? String(transactionId) : undefined,
         platform: this.currentPlatform,
+        raw: result,
       };
+    } catch (error: any) {
+      const msg = error?.message || 'Purchase failed';
+      const code = error?.code || error?.errorCode;
+
+      // RevenueCat commonly returns userCancelled flag in error or separate param in callbacks.
+      if (code === 'USER_CANCELLED' || msg.toLowerCase().includes('cancel')) {
+        return { success: false, platform: this.currentPlatform, error: 'Purchase cancelled' };
+      }
+
+      return { success: false, platform: this.currentPlatform, error: msg, raw: error };
     }
   }
 
   /**
-   * Restore previous purchases
+   * Restore purchases (Apple/Google)
    */
   async restorePurchases(): Promise<{ restored: ProductId[]; error?: string }> {
     if (!this.isNative) {
-      console.log('[IAP] Web mode - restore not available');
       return { restored: [], error: 'Restore is only available on mobile devices' };
     }
 
     try {
-      // TODO: Implement real restore
-       // const { Purchases } = await import('@revenuecat/purchases-capacitor');
-      // const customerInfo = await Purchases.restorePurchases();
-      // Extract purchased product IDs from customerInfo
-      
-      return { restored: [] };
-    } catch (error: unknown) {
-      console.error('[IAP] Restore failed:', error);
-      const errorMessage = (error as { message?: string })?.message;
-      return { 
-        restored: [], 
-        error: errorMessage || 'Failed to restore purchases' 
-      };
+      await this.ensureConfigured();
+      const { Purchases } = await this.sdk();
+
+      const customerInfo: any = await Purchases.restorePurchases();
+
+      const active = customerInfo?.entitlements?.active || {};
+      const restoredProducts: string[] = [];
+
+      // If entitlement is active, we consider premium restored.
+      // We also attempt to pull product identifiers if present.
+      for (const [_, ent] of Object.entries<any>(active)) {
+        if (ent?.productIdentifier) restoredProducts.push(ent.productIdentifier);
+      }
+
+      return { restored: restoredProducts };
+    } catch (error: any) {
+      return { restored: [], error: error?.message || 'Failed to restore purchases' };
     }
   }
 
   /**
-   * Check if user has active premium subscription
+   * Check if the RevenueCat entitlement "premium" is active.
    */
-  async checkPremiumStatus(): Promise<boolean> {
-    if (!this.isNative) {
-      return false;
-    }
+  async checkPremiumStatus(): Promise<{ isPremium: boolean; expiresAt?: string | null }> {
+    if (!this.isNative) return { isPremium: false };
 
     try {
-      // TODO: Implement real subscription check
-      // const { Purchases } = await import('@revenuecat/purchases-capacitor');
-      // const customerInfo = await Purchases.getCustomerInfo();
-      // return customerInfo.entitlements.active['premium'] !== undefined;
-      
-      return false;
+      await this.ensureConfigured();
+      const { Purchases } = await this.sdk();
+
+      const customerInfo: any = await Purchases.getCustomerInfo();
+      const premiumEntitlement = customerInfo?.entitlements?.active?.premium;
+
+      const isPremium = !!premiumEntitlement;
+      const expiresAt = premiumEntitlement?.expirationDate || premiumEntitlement?.expiresDate || null;
+
+      return { isPremium, expiresAt: expiresAt ? String(expiresAt) : null };
     } catch (error) {
       console.error('[IAP] Failed to check premium status:', error);
-      return false;
+      return { isPremium: false };
     }
-  }
-
-  /**
-   * Get mock product data for development/web
-   */
-  private getMockProduct(productId: ProductId): IAPProduct {
-    const mockData: Record<ProductId, Omit<IAPProduct, 'productId'>> = {
-      [IAP_PRODUCT_IDS.PREMIUM_MONTHLY]: {
-        title: 'Premium Monthly',
-        description: 'Unlock all premium features',
-        price: '$4.99',
-        priceAmount: 4.99,
-        currency: 'USD',
-      },
-      [IAP_PRODUCT_IDS.PREMIUM_ANNUAL]: {
-        title: 'Premium Annual',
-        description: 'Save 50% with annual subscription',
-        price: '$29.99',
-        priceAmount: 29.99,
-        currency: 'USD',
-      },
-      [IAP_PRODUCT_IDS.PREMIUM_LIFETIME]: {
-        title: 'Premium Lifetime',
-        description: 'One-time purchase, forever access',
-        price: '$79.99',
-        priceAmount: 79.99,
-        currency: 'USD',
-      },
-      [IAP_PRODUCT_IDS.POINTS_SMALL]: {
-        title: 'Starter Pack',
-        description: '500 points',
-        price: '$0.99',
-        priceAmount: 0.99,
-        currency: 'USD',
-      },
-      [IAP_PRODUCT_IDS.POINTS_MEDIUM]: {
-        title: 'Value Bundle',
-        description: '1,500 points + 150 bonus',
-        price: '$2.49',
-        priceAmount: 2.49,
-        currency: 'USD',
-      },
-      [IAP_PRODUCT_IDS.POINTS_LARGE]: {
-        title: 'Super Pack',
-        description: '5,000 points + 750 bonus',
-        price: '$6.99',
-        priceAmount: 6.99,
-        currency: 'USD',
-      },
-      [IAP_PRODUCT_IDS.POINTS_MEGA]: {
-        title: 'Mega Bundle',
-        description: '12,000 points + 2,000 bonus',
-        price: '$14.99',
-        priceAmount: 14.99,
-        currency: 'USD',
-      },
-    };
-
-    return {
-      productId,
-      ...mockData[productId],
-    };
   }
 }
 
-// Export singleton instance
-export const iapService = new CrossPlatformIAPService();
-
-// Keep backwards compatibility alias
-export const appleIAP = iapService;
+export const iapService = new IAPService();
