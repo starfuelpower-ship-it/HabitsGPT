@@ -19,6 +19,15 @@
 import { Capacitor } from '@capacitor/core';
 
 export type Platform = 'apple' | 'google' | 'web';
+
+// Exposed helper for UI/hooks (web builds like Vercel need this exported).
+export function getCurrentPlatform(): Platform {
+  const platform = Capacitor.getPlatform();
+  if (platform === 'ios') return 'apple';
+  if (platform === 'android') return 'google';
+  return 'web';
+}
+
 export type ProductId = string;
 
 // ============================================
